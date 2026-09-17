@@ -138,7 +138,7 @@ def messy_case(value: str) -> str:
 
 def weighted_signup_date() -> date:
     """Signups skew toward later periods to mimic a growing company."""
-    span_days = (AS_OF_DATE - timedelta(days=45) - START_DATE).days
+    span_days = (AS_OF_DATE - timedelta(days=10) - START_DATE).days
     offset = int(span_days * (random.random() ** 0.7))
     return START_DATE + timedelta(days=offset)
 
@@ -356,31 +356,30 @@ def build_subscription_chain(customer: Customer) -> None:
                     continue
             return
 
-        changed = False
+        # Decide the next state without touching the current one, so the
+        # version being closed keeps the plan/seats it was actually billed at.
+        next_tier, next_quantity, next_interval = tier, quantity, interval
         if force_migration or roll < p_churn + p_up:
             if force_migration:
-                tier, changed = "starter", True
+                next_tier = "starter"
             elif TIER_RANK[tier] < 4:
-                tier = ALL_TIERS[TIER_RANK[tier] + 1]
-                quantity = max(quantity, TIER_SEAT_RANGE[tier][0])
-                changed = True
+                next_tier = ALL_TIERS[TIER_RANK[tier] + 1]
+                next_quantity = max(quantity, TIER_SEAT_RANGE[next_tier][0])
         elif roll < p_churn + p_up + p_down:
             if TIER_RANK[tier] > 1:
-                tier = ALL_TIERS[TIER_RANK[tier] - 1]
-                quantity = min(quantity, TIER_SEAT_RANGE[tier][1])
-                changed = True
+                next_tier = ALL_TIERS[TIER_RANK[tier] - 1]
+                next_quantity = min(quantity, TIER_SEAT_RANGE[next_tier][1])
         elif roll < p_churn + p_up + p_down + p_seats_up:
-            quantity = quantity + random.randint(1, max(1, quantity // 3))
-            changed = True
+            next_quantity = quantity + random.randint(1, max(1, quantity // 3))
         elif roll < p_churn + p_up + p_down + p_seats_up + p_seats_down:
             if quantity > TIER_SEAT_RANGE[tier][0]:
-                quantity = max(TIER_SEAT_RANGE[tier][0], quantity - random.randint(1, max(1, quantity // 4)))
-                changed = True
+                next_quantity = max(TIER_SEAT_RANGE[tier][0], quantity - random.randint(1, max(1, quantity // 4)))
         elif roll < p_churn + p_up + p_down + p_seats_up + p_seats_down + p_to_annual:
-            interval, changed = "annual", True
+            next_interval = "annual"
 
-        if changed:
+        if (next_tier, next_quantity, next_interval) != (tier, quantity, interval):
             emit(version_start, period_end, "superseded", None, None)
+            tier, quantity, interval = next_tier, next_quantity, next_interval
             version_start = next_start
         cursor = next_start
 
