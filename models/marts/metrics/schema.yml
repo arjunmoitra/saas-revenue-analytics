@@ -1,0 +1,130 @@
+version: 2
+
+models:
+  - name: metrics_monthly
+    description: >
+      **Grain: one row per calendar month.** The executive KPI table. All values
+      are derived from the marts (fct_mrr_movements, fct_revenue, dim_customers),
+      never from raw tables. Business definitions:
+
+      * **MRR**: sum of monthly-normalised list price (unit price x seats; annual
+        prices divided by 12) across paid subscription versions active on the last
+        day of the month. Trials excluded. Discounts and one-time fees excluded.
+        Past-due subscriptions are included until they are actually cancelled.
+      * **ARR**: MRR x 12. A run-rate, not a forecast.
+      * **New MRR**: MRR from customers whose first paid month is this month.
+      * **Expansion MRR**: increase in MRR for customers active in both this month
+        and the previous month (upgrades, extra seats).
+      * **Contraction MRR**: decrease in MRR for customers still active (downgrades,
+        fewer seats), expressed as a positive number.
+      * **Churned MRR**: prior-month MRR of customers whose MRR fell to zero this
+        month, expressed as a positive number.
+      * **Reactivation MRR**: MRR from previously churned customers who returned.
+      * **Identity**: `mrr = beginning_mrr + new + expansion + reactivation - contraction - churned`.
+      * **Active customers**: customers with MRR > 0 at month end.
+      * **Customer churn rate**: churned customers / prior month's active customers.
+      * **ARPU**: MRR / active customers.
+      * **Recognized revenue**: revenue earned in the month under the simplified
+        daily-proration revenue-recognition model (includes one-time fees, net of discounts).
+      * **Deferred revenue balance**: cumulative billed (ex-tax) minus cumulative recognized.
+    columns:
+      - name: month_start_date
+        tests: [unique, not_null]
+      - name: mrr
+        tests: [not_null, non_negative]
+      - name: arr
+        tests: [not_null, non_negative]
+      - name: beginning_mrr
+        description: MRR at the end of the previous month (sum of prior_mrr across customers).
+        tests: [not_null, non_negative]
+      - name: new_mrr
+        tests: [not_null, non_negative]
+      - name: expansion_mrr
+        tests: [not_null, non_negative]
+      - name: reactivation_mrr
+        tests: [not_null, non_negative]
+      - name: contraction_mrr
+        tests: [not_null, non_negative]
+      - name: churned_mrr
+        tests: [not_null, non_negative]
+      - name: net_new_mrr
+        description: mrr - beginning_mrr.
+        tests: [not_null]
+      - name: active_customers
+        tests: [not_null, non_negative]
+      - name: new_customers
+        tests: [not_null, non_negative]
+      - name: churned_customers
+        tests: [not_null, non_negative]
+      - name: signups
+        description: Accounts created in the month (whether or not they ever paid).
+        tests: [not_null, non_negative]
+      - name: recognized_revenue
+        tests: [not_null]
+      - name: billed_amount
+        tests: [not_null]
+      - name: deferred_revenue_balance
+        description: Billed but not yet recognised, cumulative through the month.
+        tests: [not_null]
+      - name: arpu
+        description: Average MRR per active customer.
+        tests: [non_negative]
+      - name: mrr_growth_rate
+        description: Month-over-month change in MRR as a fraction of the prior month.
+      - name: recognized_revenue_growth_rate
+      - name: customer_churn_rate
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: mrr_churn_rate
+        description: churned_mrr / beginning_mrr.
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: gross_revenue_retention
+        description: (beginning_mrr - churned - contraction) / beginning_mrr. Capped at 1 by construction.
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: net_revenue_retention
+        description: (beginning_mrr - churned - contraction + expansion) / beginning_mrr. Can exceed 1.
+        tests: [non_negative]
+
+  - name: metrics_monthly_by_plan
+    description: >
+      **Grain: one row per plan tier x month.** MRR, customers, seats, recognised
+      revenue and movement counts per tier. Churn is attributed to the tier the
+      customer was on in the prior month; upgrades and downgrades are counted in
+      the tier the customer moved *into*, in the month the new version started.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [month_start_date, plan_tier]
+    columns:
+      - name: plan_month_key
+        tests: [unique, not_null]
+      - name: month_start_date
+        tests: [not_null]
+      - name: plan_tier
+        tests: [not_null]
+      - name: mrr
+        tests: [not_null, non_negative]
+      - name: active_customers
+        tests: [not_null, non_negative]
+      - name: churned_mrr
+        tests: [not_null, non_negative]
+      - name: upgrades_into_tier
+        tests: [not_null, non_negative]
+      - name: downgrades_into_tier
+        tests: [not_null, non_negative]
+      - name: recognized_revenue
+        tests: [not_null]

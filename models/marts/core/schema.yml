@@ -1,0 +1,146 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: >
+      **Grain: one row per customer.** Firmographics from the billing system plus
+      a lifecycle summary as of the snapshot date (status, current plan and MRR,
+      tenure, counts of upgrades/downgrades/cancellations, lifetime billing).
+    columns:
+      - name: customer_id
+        tests: [unique, not_null]
+      - name: company_name
+        tests: [not_null]
+      - name: country_code
+        tests: [not_null]
+      - name: segment
+        tests: [not_null]
+      - name: signup_date
+        description: Date the account was created.
+        tests: [not_null]
+      - name: customer_status
+        description: >
+          `active` = has an open paid subscription; `churned` = previously paid, nothing open;
+          `trial_only` = never converted; `never_subscribed` = no subscription records.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [active, churned, trial_only, never_subscribed]
+      - name: first_paid_start_date
+        description: Start of the first paid subscription version (null if the customer never paid).
+      - name: churned_date
+        description: Last day of paid service for churned customers; null for active customers.
+      - name: is_active
+        description: True when the customer has an open paid subscription as of the snapshot date.
+        tests: [not_null]
+      - name: current_mrr
+        description: MRR of the open subscription version, or 0.
+        tests: [not_null, non_negative]
+      - name: current_arr
+        description: current_mrr x 12.
+        tests: [not_null, non_negative]
+      - name: latest_plan_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_plans')
+                field: plan_id
+      - name: paid_tenure_months
+        description: Whole months between first paid start and churn date (or snapshot date if active).
+        tests: [not_null, non_negative]
+      - name: lifetime_billed_amount
+        description: Sum of total_amount across the customer's non-void invoices.
+        tests: [not_null]
+
+  - name: dim_plans
+    description: >
+      **Grain: one row per plan_id (tier x billing interval).** Includes the list
+      price per seat per interval and the same price normalised to a monthly figure.
+    columns:
+      - name: plan_id
+        tests: [unique, not_null]
+      - name: plan_tier
+        tests: [not_null]
+      - name: plan_tier_rank
+        description: Ordering used to decide whether a plan change is an upgrade or a downgrade.
+        tests: [not_null]
+      - name: billing_interval
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [monthly, annual]
+      - name: unit_price
+        description: Price per seat per billing interval.
+        tests: [not_null, non_negative]
+      - name: monthly_unit_price
+        description: unit_price for monthly plans, unit_price / 12 for annual plans. Per-seat MRR.
+        tests: [not_null, non_negative]
+
+  - name: dim_subscriptions
+    description: >
+      **Grain: one row per subscription version** (a version is closed and a new one
+      opened on any plan, seat or billing-interval change). Trials are included with
+      `is_trial = true`, null MRR and `change_type = 'trial'`.
+    columns:
+      - name: subscription_id
+        tests: [unique, not_null]
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: plan_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_plans')
+                field: plan_id
+      - name: previous_subscription_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_subscriptions')
+                field: subscription_id
+      - name: seats
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: subscription_status
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [active, past_due, canceled, superseded, trialing, converted, expired]
+      - name: start_date
+        tests: [not_null]
+      - name: effective_end_date
+        tests: [not_null]
+      - name: is_open
+        tests: [not_null]
+      - name: mrr
+        description: Monthly-normalised recurring amount for paid versions; null for trials.
+        tests: [non_negative]
+      - name: arr
+        description: mrr x 12.
+        tests: [non_negative]
+      - name: change_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [trial, new, reactivation, upgrade, downgrade, seat_expansion, seat_contraction, interval_change]
+      - name: duration_days
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true

@@ -1,0 +1,192 @@
+version: 2
+
+models:
+  - name: int_months
+    description: >
+      **Grain: one row per calendar month** from `metrics_start_date` through the
+      month containing `as_of_date`. The spine every monthly model joins to so
+      months with no activity are still present.
+    columns:
+      - name: month_start_date
+        tests: [unique, not_null]
+      - name: month_end_date
+        tests: [not_null]
+      - name: is_complete_month
+        description: False only when the snapshot date falls before the end of the month.
+
+  - name: int_subscription_periods
+    description: >
+      **Grain: one row per paid subscription version** (trials excluded).
+      Adds plan pricing, the monthly-normalised recurring amount (`mrr_amount`)
+      and a classification of the change versus the customer's previous paid
+      version using window functions. This is the single place where
+      upgrade / downgrade / expansion / contraction / reactivation logic lives.
+    columns:
+      - name: subscription_id
+        tests: [unique, not_null]
+      - name: customer_id
+        tests: [not_null]
+      - name: recurring_amount
+        description: unit_price x quantity for one billing interval.
+        tests: [not_null]
+      - name: mrr_amount
+        description: >
+          Monthly recurring revenue contributed by this version:
+          `recurring_amount` for monthly plans, `recurring_amount / 12` for annual plans.
+        tests: [not_null, non_negative]
+      - name: effective_end_date
+        description: end_date, or the snapshot date for open versions.
+        tests: [not_null]
+      - name: version_number
+        description: 1-based ordinal of this version within the customer's paid history.
+        tests: [not_null]
+      - name: change_type
+        description: >
+          How this version differs from the previous paid version.
+          `new` = first ever; `reactivation` = gap after a cancellation;
+          `upgrade` / `downgrade` = tier change; `seat_expansion` / `seat_contraction` = seat change on
+          the same tier; `interval_change` = same tier and seats, different billing interval.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [new, reactivation, upgrade, downgrade, seat_expansion, seat_contraction, interval_change]
+      - name: mrr_change_vs_previous
+        description: mrr_amount minus the previous version's mrr_amount (0 for first versions).
+
+  - name: int_customer_subscription_history
+    description: >
+      **Grain: one row per customer** (all customers, including those who only trialled).
+      Lifecycle summary: first paid date, current status, latest plan, change counts.
+    columns:
+      - name: customer_id
+        tests: [unique, not_null]
+      - name: customer_status
+        description: >
+          `active` = has an open paid version; `churned` = paid before but nothing open;
+          `trial_only` = trialled and never paid; `never_subscribed` = no subscriptions at all.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [active, churned, trial_only, never_subscribed]
+      - name: current_mrr_amount
+        description: MRR of the open version, or 0 when the customer is not active.
+        tests: [not_null, non_negative]
+      - name: churned_date
+        description: End date of the last paid version for churned customers; null otherwise.
+
+  - name: int_subscription_mrr_monthly
+    description: >
+      **Grain: one row per subscription version per month** in which the version
+      was active on the last day of the month. MRR is a month-end snapshot, so a
+      version that started on the 20th counts in full for that month and one that
+      ended on the 15th does not count at all.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [subscription_id, month_start_date]
+    columns:
+      - name: subscription_id
+        tests: [not_null]
+      - name: customer_id
+        tests: [not_null]
+      - name: month_start_date
+        tests: [not_null]
+      - name: mrr_amount
+        tests: [not_null, non_negative]
+
+  - name: int_customer_mrr_monthly
+    description: >
+      **Grain: one row per customer per month** from the customer's first paid month
+      through the snapshot month, including zero-MRR months after churn.
+      Classifies the month-over-month movement (new, expansion, contraction, churn,
+      reactivation, retained, inactive) and splits the MRR delta into signed
+      movement columns that satisfy
+      `mrr = prior_mrr + new + expansion + reactivation - contraction - churned`.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [customer_id, month_start_date]
+    columns:
+      - name: customer_id
+        tests: [not_null]
+      - name: month_start_date
+        tests: [not_null]
+      - name: mrr
+        tests: [not_null, non_negative]
+      - name: prior_mrr
+        tests: [not_null, non_negative]
+      - name: mrr_movement_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [new, expansion, contraction, churn, reactivation, retained, inactive]
+      - name: new_mrr
+        tests: [non_negative]
+      - name: expansion_mrr
+        tests: [non_negative]
+      - name: contraction_mrr
+        tests: [non_negative]
+      - name: churned_mrr
+        tests: [non_negative]
+      - name: reactivation_mrr
+        tests: [non_negative]
+
+  - name: int_invoice_line_totals
+    description: >
+      **Grain: one row per invoice** with line items rolled up by type
+      (subscription, one_time, discount). Used to reconcile headers to lines.
+    columns:
+      - name: invoice_id
+        tests: [unique, not_null]
+      - name: line_items_subtotal
+        tests: [not_null]
+
+  - name: int_invoice_payments
+    description: >
+      **Grain: one row per invoice that has at least one payment attempt.**
+      Gross charges, refunds, net collected, failed attempts and payment timing.
+    columns:
+      - name: invoice_id
+        tests: [unique, not_null]
+      - name: amount_charged
+        description: Sum of successful charge payments.
+        tests: [not_null, non_negative]
+      - name: amount_refunded
+        description: Sum of refunds, expressed as a positive number.
+        tests: [not_null, non_negative]
+      - name: net_amount_collected
+        description: amount_charged minus amount_refunded.
+        tests: [not_null]
+
+  - name: int_revenue_recognition
+    description: >
+      **Grain: one row per invoice line item per service month.**
+      Simplified revenue recognition: each line's amount is spread evenly by
+      day across its service period. Rounding is handled by differencing
+      cumulative rounded shares, so the monthly amounts sum exactly to the line.
+      Voided invoices are excluded; uncollectible invoices are still recognised
+      (bad debt is not a revenue reversal) and can be filtered via `invoice_status`.
+      Months after the snapshot date are retained to support deferred revenue.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [line_item_id, revenue_month]
+    columns:
+      - name: line_item_id
+        tests: [not_null]
+      - name: revenue_month
+        tests: [not_null]
+      - name: service_days_in_month
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 31
+                inclusive: true
+      - name: recognized_revenue
+        description: Portion of the line amount earned in this month. Negative for discount lines.
+        tests: [not_null]

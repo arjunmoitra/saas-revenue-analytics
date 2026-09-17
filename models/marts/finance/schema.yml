@@ -1,0 +1,242 @@
+version: 2
+
+models:
+  - name: fct_invoices
+    description: >
+      **Grain: one row per invoice.** Header amounts, the line-item split
+      (subscription / one-time / discount), payment roll-up and outstanding
+      balance. Voided invoices are retained and flagged so the table reconciles
+      to the source; revenue models exclude them.
+    columns:
+      - name: invoice_id
+        tests: [unique, not_null]
+      - name: invoice_number
+        tests: [unique, not_null]
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: subscription_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_subscriptions')
+                field: subscription_id
+      - name: plan_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_plans')
+                field: plan_id
+      - name: invoice_status
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [paid, open, uncollectible, void]
+      - name: issued_date
+        tests: [not_null]
+      - name: issued_month
+        tests: [not_null]
+      - name: service_days
+        description: Length of the invoice's service period in days.
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: subtotal_amount
+        description: Invoice header subtotal (ex-tax). Must equal line_items_subtotal.
+        tests: [not_null]
+      - name: total_amount
+        description: subtotal_amount + tax_amount.
+        tests: [not_null]
+      - name: line_items_subtotal
+        description: Sum of line item amounts. Reconciled against subtotal_amount by a singular test.
+        tests: [not_null]
+      - name: amount_charged
+        description: Successful charge payments applied to the invoice.
+        tests: [not_null, non_negative]
+      - name: amount_refunded
+        tests: [not_null, non_negative]
+      - name: net_amount_collected
+        description: amount_charged - amount_refunded.
+        tests: [not_null]
+      - name: balance_due
+        description: >
+          Amount still owed: total_amount - amount_charged, floored at zero and
+          forced to zero for voided invoices. Refunds do not reopen a balance.
+        tests: [not_null, non_negative]
+      - name: is_past_due
+        description: Open invoice whose due date is before the snapshot date.
+        tests: [not_null]
+      - name: is_reconciled_to_lines
+        description: True when subtotal_amount equals the sum of line items.
+        tests:
+          - accepted_values:
+              arguments:
+                values: [true]
+
+  - name: fct_payments
+    description: >
+      **Grain: one row per payment attempt** (successful charge, failed attempt or refund).
+      Amounts keep their sign, so `sum(settled_amount)` is net cash collected.
+    columns:
+      - name: payment_id
+        tests: [unique, not_null]
+      - name: invoice_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_invoices')
+                field: invoice_id
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: payment_status
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [succeeded, failed]
+      - name: payment_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [charge, refund]
+      - name: amount
+        description: Signed amount; negative for refunds.
+        tests: [not_null]
+      - name: settled_amount
+        description: amount for succeeded payments, 0 for failed attempts.
+        tests: [not_null]
+      - name: paid_date
+        tests: [not_null]
+      - name: is_late
+        description: Payment landed after the invoice due date.
+        tests: [not_null]
+
+  - name: fct_revenue
+    description: >
+      **Grain: one row per customer x plan x month** within the reporting window.
+      Brings together three revenue views that are easy to confuse:
+      `recognized_revenue` (earned in the month, from the revenue-recognition
+      model), `billed_amount` (invoiced in the month, ex-tax) and `mrr`
+      (contracted run-rate at month end). One-time fees are attributed to the
+      plan of the subscription the invoice belongs to.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [customer_id, plan_id, month_start_date]
+    columns:
+      - name: revenue_key
+        description: Surrogate key over customer_id, plan_id, month_start_date.
+        tests: [unique, not_null]
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: plan_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_plans')
+                field: plan_id
+      - name: month_start_date
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('int_months')
+                field: month_start_date
+      - name: recognized_revenue
+        description: Revenue earned in the month across all line types (discounts reduce it).
+        tests: [not_null]
+      - name: recognized_recurring_revenue
+        tests: [not_null, non_negative]
+      - name: recognized_one_time_revenue
+        tests: [not_null, non_negative]
+      - name: billed_amount
+        description: Ex-tax subtotal of non-void invoices issued in the month.
+        tests: [not_null]
+      - name: collected_amount
+        description: Net cash collected against invoices issued in the month (as of the snapshot).
+        tests: [not_null]
+      - name: mrr
+        description: Month-end MRR for this customer on this plan.
+        tests: [not_null, non_negative]
+      - name: arr
+        tests: [not_null, non_negative]
+
+  - name: fct_mrr_movements
+    description: >
+      **Grain: one row per customer x month** from the customer's first paid month
+      through the snapshot month. Month-end MRR, the prior month's MRR, the
+      movement classification and the signed movement amounts that feed the MRR
+      waterfall. Enriched with customer attributes and the plan active at month end.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [customer_id, month_start_date]
+    columns:
+      - name: mrr_movement_key
+        tests: [unique, not_null]
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: month_start_date
+        tests: [not_null]
+      - name: plan_id
+        description: Plan active at month end; null in churned/inactive months.
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_plans')
+                field: plan_id
+      - name: months_since_first_paid
+        description: 0 in the customer's first paid month; used for cohort retention.
+        tests: [not_null, non_negative]
+      - name: is_active
+        tests: [not_null]
+      - name: prior_mrr
+        tests: [not_null, non_negative]
+      - name: mrr
+        tests: [not_null, non_negative]
+      - name: mrr_movement_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [new, expansion, contraction, churn, reactivation, retained, inactive]
+      - name: new_mrr
+        tests: [not_null, non_negative]
+      - name: expansion_mrr
+        tests: [not_null, non_negative]
+      - name: contraction_mrr
+        tests: [not_null, non_negative]
+      - name: churned_mrr
+        tests: [not_null, non_negative]
+      - name: reactivation_mrr
+        tests: [not_null, non_negative]
+      - name: net_mrr_change
+        description: mrr - prior_mrr.
+        tests: [not_null]
