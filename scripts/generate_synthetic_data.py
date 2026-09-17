@@ -557,6 +557,11 @@ def build_payments() -> None:
             refund = -round(inv.total_cents * random.choice([0.25, 0.5, 1.0]))
             add_payment(inv, refund, "succeeded", paid_on + timedelta(days=random.randint(3, 25)), payment_type="refund")
 
+        # Payments dated after the snapshot are dropped by add_payment, so an
+        # invoice is only "paid" if the charges that landed cover its total.
+        if charged_by_invoice.get(inv.invoice_id, 0) < inv.total_cents:
+            inv.status = "open"
+
     invoices.extend(extra_invoices)
 
     # Mark the latest subscription of customers with an uncollectible latest invoice as past_due.
@@ -567,9 +572,14 @@ def build_payments() -> None:
                 sub.status = "past_due"
 
 
+charged_by_invoice: dict[str, int] = {}
+
+
 def add_payment(inv: Invoice, amount_cents: int, status: str, paid_at: date, payment_type: str = "charge") -> None:
     if paid_at > AS_OF_DATE:
         return
+    if status == "succeeded" and payment_type == "charge":
+        charged_by_invoice[inv.invoice_id] = charged_by_invoice.get(inv.invoice_id, 0) + amount_cents
     payments.append(
         dict(
             payment_id=new_id("py"),
