@@ -141,9 +141,11 @@ recognized as (
         amount as line_amount,
         service_days,
         service_days_in_month,
-        round(amount * cumulative_service_days / service_days, 2)
+        cast(
+            round(amount * cumulative_service_days / service_days, 2)
             - round(amount * (cumulative_service_days - service_days_in_month) / service_days, 2)
-            as recognized_revenue
+            as decimal(14, 2)
+        ) as recognized_revenue
 
     from cumulative
 
