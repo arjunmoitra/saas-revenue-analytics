@@ -1,0 +1,11 @@
+plan_id,plan_name,tier,tier_rank,billing_interval,unit_price_cents,currency,is_active,created_at
+basic_monthly,Basic (Monthly),basic,0,monthly,900,USD,false,2022-06-01T09:15:03Z
+basic_annual,Basic (Annual),basic,0,annual,9000,USD,false,2022-06-01T09:52:10Z
+starter_monthly,Starter (Monthly),starter,1,monthly,1200,USD,true,2022-06-01T09:42:24Z
+starter_annual,Starter (Annual),starter,1,annual,12000,USD,true,2022-06-01T09:12:25Z
+growth_monthly,Growth (Monthly),growth,2,monthly,2900,USD,true,2022-06-01T09:29:05Z
+growth_annual,Growth (Annual),growth,2,annual,29000,USD,true,2022-06-01T09:19:49Z
+scale_monthly,Scale (Monthly),scale,3,monthly,5900,USD,true,2022-06-01T09:08:07Z
+scale_annual,Scale (Annual),scale,3,annual,59000,USD,true,2022-06-01T09:53:20Z
+enterprise_monthly,Enterprise (Monthly),enterprise,4,monthly,9900,USD,true,2022-06-01T09:31:47Z
+enterprise_annual,Enterprise (Annual),enterprise,4,annual,99000,USD,true,2022-06-01T09:35:37Z
