@@ -1,0 +1,274 @@
+version: 2
+
+models:
+  - name: stg_plans
+    description: >
+      **Grain: one row per plan_id (plan tier x billing interval).**
+      Cleans the plan catalogue: prices converted from cents to dollars,
+      interval and tier lower-cased, is_active cast to boolean.
+    columns:
+      - name: plan_id
+        description: Natural key of the plan, e.g. `growth_annual`.
+        tests: [unique, not_null]
+      - name: plan_name
+        description: Display name shown on invoices.
+        tests: [not_null]
+      - name: plan_tier
+        description: Product tier (`basic`, `starter`, `growth`, `scale`, `enterprise`). Determines upgrade vs downgrade.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [basic, starter, growth, scale, enterprise]
+      - name: plan_tier_rank
+        description: Integer ordering of tiers; higher rank = more expensive tier.
+        tests: [not_null]
+      - name: billing_interval
+        description: How often the plan bills.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [monthly, annual]
+      - name: unit_price
+        description: List price per seat per billing interval, in dollars.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: currency
+        tests:
+          - accepted_values:
+              arguments:
+                values: [USD]
+      - name: is_active
+        description: False for retired plans that can no longer be purchased.
+        tests: [not_null]
+
+  - name: stg_customers
+    description: >
+      **Grain: one row per customer_id.**
+      Trims and lower-cases identifiers, normalises free-text country values to
+      ISO codes via the `country_codes` seed and standardises segment labels.
+    columns:
+      - name: customer_id
+        tests: [unique, not_null]
+      - name: company_name
+        tests: [not_null]
+      - name: primary_email
+        description: Billing contact, lower-cased.
+        tests: [not_null]
+      - name: country_code
+        description: ISO 3166-1 alpha-2 country code derived from the messy source value.
+        tests: [not_null]
+      - name: country_name
+        tests: [not_null]
+      - name: segment
+        description: Sales segment as recorded at signup.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [SMB, Mid-Market, Enterprise]
+      - name: acquisition_channel
+        tests: [not_null]
+      - name: created_at
+        description: Account creation timestamp (signup).
+        tests: [not_null]
+
+  - name: stg_subscriptions
+    description: >
+      **Grain: one row per subscription_id, which is one subscription *version*.**
+      A version is closed (end_date set) and a new one opened whenever the plan,
+      seat count or billing interval changes. `end_date` is null for versions
+      that are still open as of the snapshot date. No business logic beyond
+      casting and trimming lives here; see `int_subscription_periods`.
+    columns:
+      - name: subscription_id
+        tests: [unique, not_null]
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: plan_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_plans')
+                field: plan_id
+      - name: previous_subscription_id
+        description: The version this one replaced, or null for the first version of a subscription chain.
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_subscriptions')
+                field: subscription_id
+      - name: quantity
+        description: Number of seats billed.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: subscription_status
+        description: >
+          Source status. `superseded` = replaced by a newer version, `converted` = trial that
+          became paid, `expired` = trial that never converted.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [active, past_due, canceled, superseded, trialing, converted, expired]
+      - name: is_trial
+        description: True for 14-day free trials, which never generate invoices or MRR.
+        tests: [not_null]
+      - name: start_date
+        tests: [not_null]
+      - name: end_date
+        description: Last day of service for this version; null while open.
+      - name: canceled_at
+        description: When the customer requested cancellation (service continues to end_date).
+      - name: cancellation_reason
+        tests:
+          - accepted_values:
+              arguments:
+                values: [too_expensive, missing_features, switched_competitor, no_longer_needed, poor_support, other]
+
+  - name: stg_invoices
+    description: >
+      **Grain: one row per invoice_id.**
+      Amounts converted from cents to dollars. `total_amount = subtotal_amount + tax_amount`.
+      Voided invoices remain in the table and are excluded downstream.
+    columns:
+      - name: invoice_id
+        tests: [unique, not_null]
+      - name: invoice_number
+        description: Human-readable sequential number.
+        tests: [unique, not_null]
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: subscription_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_subscriptions')
+                field: subscription_id
+      - name: invoice_status
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [paid, open, uncollectible, void]
+      - name: subtotal_amount
+        description: Sum of line items before tax, in dollars.
+        tests: [not_null]
+      - name: tax_amount
+        tests: [not_null]
+      - name: total_amount
+        description: Amount the customer owes (subtotal + tax).
+        tests: [not_null]
+      - name: issued_date
+        tests: [not_null]
+      - name: due_date
+        tests: [not_null]
+      - name: service_period_start
+        tests: [not_null]
+      - name: service_period_end
+        tests: [not_null]
+
+  - name: stg_invoice_line_items
+    description: >
+      **Grain: one row per line_item_id.**
+      Each line carries its own service period so revenue can be recognised over time.
+      Discount lines have negative amounts.
+    columns:
+      - name: line_item_id
+        tests: [unique, not_null]
+      - name: invoice_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_invoices')
+                field: invoice_id
+      - name: plan_id
+        description: Plan billed on the line; null for one-time fees.
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_plans')
+                field: plan_id
+      - name: line_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [subscription, one_time, discount]
+      - name: quantity
+        tests: [not_null]
+      - name: amount
+        description: Line total in dollars (`quantity * unit_amount`); negative for discounts.
+        tests: [not_null]
+      - name: service_period_start
+        tests: [not_null]
+      - name: service_period_end
+        tests: [not_null]
+
+  - name: stg_payments
+    description: >
+      **Grain: one row per payment_id (one payment attempt).**
+      Includes failed attempts and refunds. Refund rows have negative amounts
+      so `sum(amount) where payment_status = 'succeeded'` is net cash collected.
+    columns:
+      - name: payment_id
+        tests: [unique, not_null]
+      - name: invoice_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_invoices')
+                field: invoice_id
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: amount
+        description: Signed amount in dollars. Positive for charges, negative for refunds.
+        tests: [not_null]
+      - name: payment_status
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [succeeded, failed]
+      - name: payment_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [charge, refund]
+      - name: payment_method
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [card, ach_debit, wire]
+      - name: paid_at
+        tests: [not_null]

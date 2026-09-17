@@ -1,0 +1,43 @@
+version: 2
+
+sources:
+  - name: billing
+    description: >
+      Raw extracts from the (synthetic) subscription billing system, loaded
+      untouched by scripts/load_raw_data.py. Money is stored as integer cents
+      and dates as ISO-8601 strings; all casting happens in staging.
+    schema: raw
+    tables:
+      - name: raw_plans
+        description: One row per plan and billing interval. Prices are per seat per interval.
+        columns:
+          - name: plan_id
+            tests: [unique, not_null]
+      - name: raw_customers
+        description: One row per customer account.
+        columns:
+          - name: customer_id
+            tests: [unique, not_null]
+      - name: raw_subscriptions
+        description: >
+          One row per subscription version. A new version is written whenever a
+          customer changes plan, seat count or billing interval; the previous
+          version is closed with an end_date the day before.
+        columns:
+          - name: subscription_id
+            tests: [unique, not_null]
+      - name: raw_invoices
+        description: One row per invoice. One invoice is issued per billing period.
+        columns:
+          - name: invoice_id
+            tests: [unique, not_null]
+      - name: raw_invoice_line_items
+        description: One row per invoice line item.
+        columns:
+          - name: line_item_id
+            tests: [unique, not_null]
+      - name: raw_payments
+        description: One row per payment attempt (charges, failed attempts and refunds).
+        columns:
+          - name: payment_id
+            tests: [unique, not_null]
