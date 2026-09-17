@@ -1,0 +1,10 @@
+# Local profile checked into the repo so the project runs with zero setup.
+# dbt reads profiles.yml from the current directory before ~/.dbt/.
+saas_revenue_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: data/saas_revenue.duckdb
+      schema: main
+      threads: 4

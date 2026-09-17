@@ -1,0 +1,40 @@
+name: saas_revenue_analytics
+version: 1.0.0
+config-version: 2
+
+profile: saas_revenue_analytics
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+
+target-path: target
+clean-targets:
+  - target
+  - dbt_packages
+
+vars:
+  # Snapshot date for point-in-time metrics (open subscriptions are treated as
+  # active through this date). Keep aligned with the synthetic data generator.
+  as_of_date: "2026-08-31"
+  # First month covered by the date spine and the monthly metric models.
+  metrics_start_date: "2023-01-01"
+
+models:
+  saas_revenue_analytics:
+    +materialized: view
+    staging:
+      +schema: staging
+      +materialized: view
+    intermediate:
+      +schema: intermediate
+      +materialized: view
+    marts:
+      +schema: marts
+      +materialized: table
+
+seeds:
+  saas_revenue_analytics:
+    +schema: seeds
