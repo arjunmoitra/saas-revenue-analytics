@@ -210,19 +210,24 @@ function render() {
   document.getElementById('asof').textContent = DATA.as_of_date;
 
   // ---- tiles --------------------------------------------------------------
-  const tile = (label, value, delta, up, note) => `
-    <div class="tile"><div class="label">${label}</div><div class="value">${value}</div>
-    <div class="delta ${delta == null ? '' : (up ? 'up' : 'down')}">${delta == null ? '' : (up ? '&#9650; ' : '&#9660; ') + delta} ${note || ''}</div></div>`;
+  // delta: signed change; arrow follows the sign, colour follows whether that direction is good.
+  const tile = (label, value, change, fmt, goodWhenUp, note) => {
+    if (change == null || Number.isNaN(change)) return `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div><div class="delta">&nbsp;</div></div>`;
+    const up = change >= 0;
+    const good = goodWhenUp ? up : !up;
+    return `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div>
+      <div class="delta ${good ? 'up' : 'down'}">${up ? '&#9650;' : '&#9660;'} ${fmt(Math.abs(change))} ${note || ''}</div></div>`;
+  };
   const arrDelta = (last.arr - yearAgo.arr) / yearAgo.arr;
   document.getElementById('tiles').innerHTML = [
-    tile('ARR', fmtMoney(last.arr), fmtPct(arrDelta), arrDelta >= 0, 'vs 12 months ago'),
-    tile('MRR', fmtMoney(last.mrr), fmtPct(last.mrr_growth_rate), last.mrr_growth_rate >= 0, 'vs prior month'),
-    tile('Net new MRR', fmtMoney(last.net_new_mrr), fmtMoney(last.net_new_mrr - prev.net_new_mrr), last.net_new_mrr >= prev.net_new_mrr, 'vs prior month'),
-    tile('Active customers', fmtInt(last.active_customers), fmtInt(last.active_customers - prev.active_customers), last.active_customers >= prev.active_customers, 'vs prior month'),
-    tile('Customer churn rate', fmtPct(last.customer_churn_rate, 2), fmtPct(last.customer_churn_rate - prev.customer_churn_rate, 2), last.customer_churn_rate <= prev.customer_churn_rate, 'vs prior month'),
-    tile('Net revenue retention', fmtPct(last.net_revenue_retention), null),
-    tile('ARPU', fmtMoney(last.arpu), fmtPct((last.arpu - prev.arpu) / prev.arpu), last.arpu >= prev.arpu, 'vs prior month'),
-    tile('Recognized revenue', fmtMoney(last.recognized_revenue), fmtPct(last.recognized_revenue_growth_rate), (last.recognized_revenue_growth_rate || 0) >= 0, 'vs prior month'),
+    tile('ARR', fmtMoney(last.arr), arrDelta, fmtPct, true, 'vs 12 months ago'),
+    tile('MRR', fmtMoney(last.mrr), last.mrr_growth_rate, fmtPct, true, 'vs prior month'),
+    tile('Net new MRR', fmtMoney(last.net_new_mrr), last.net_new_mrr - prev.net_new_mrr, fmtMoney, true, 'vs prior month'),
+    tile('Active customers', fmtInt(last.active_customers), last.active_customers - prev.active_customers, fmtInt, true, 'vs prior month'),
+    tile('Customer churn rate', fmtPct(last.customer_churn_rate, 2), last.customer_churn_rate - prev.customer_churn_rate, v => fmtPct(v, 2) + ' pts', false, 'vs prior month'),
+    tile('Net revenue retention', fmtPct(last.net_revenue_retention), last.net_revenue_retention - prev.net_revenue_retention, v => fmtPct(v, 1) + ' pts', true, 'vs prior month'),
+    tile('ARPU', fmtMoney(last.arpu), (last.arpu - prev.arpu) / prev.arpu, fmtPct, true, 'vs prior month'),
+    tile('Recognized revenue', fmtMoney(last.recognized_revenue), last.recognized_revenue_growth_rate, fmtPct, true, 'vs prior month'),
   ].join('');
 
   const s1 = css('--series-1'), s2 = css('--series-2'), s3 = css('--series-3'), s4 = css('--series-4'), s5 = css('--series-5');

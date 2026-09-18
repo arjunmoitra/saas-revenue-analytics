@@ -51,7 +51,7 @@ def main() -> None:
                 contraction_mrr, churned_mrr, net_new_mrr, active_customers, new_customers,
                 churned_customers, reactivated_customers, signups, recognized_revenue,
                 recognized_recurring_revenue, recognized_one_time_revenue, billed_amount,
-                collected_amount, deferred_revenue_balance, arpu, mrr_growth_rate,
+                collected_amount, deferred_revenue_balance, arpu, mrr_growth_rate, recognized_revenue_growth_rate,
                 customer_churn_rate, mrr_churn_rate, gross_revenue_retention, net_revenue_retention
             from marts.metrics_monthly
             order by month_start_date
