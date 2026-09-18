@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SaaS Revenue Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fcfcfb;
+    --surface-2: #f3f2ef;
+    --border: #e4e2dc;
+    --grid: #eceae5;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #8a8880;
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --series-4: #eda100;
+    --series-5: #e87ba4;
+    --ord-1: #86b6ef;
+    --ord-2: #5598e7;
+    --ord-3: #2a78d6;
+    --ord-4: #184f95;
+    --good: #0ca30c;
+    --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface: #1a1a19;
+      --surface-2: #232322;
+      --border: #33332f;
+      --grid: #2c2c29;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #8f8e85;
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+      --series-4: #c98500;
+      --series-5: #d55181;
+      --ord-1: #6da7ec;
+      --ord-2: #3987e5;
+      --ord-3: #256abf;
+      --ord-4: #184f95;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--surface);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  header { padding: 28px 16px 8px; max-width: 1240px; margin: 0 auto; }
+  header h1 { font-size: 22px; margin: 0 0 4px; font-weight: 600; }
+  header p { margin: 0; color: var(--text-secondary); }
+  main { max-width: 1240px; margin: 0 auto; padding: 0 16px 48px; }
+  .filters { display: flex; gap: 8px; align-items: center; padding: 16px 0; flex-wrap: wrap; }
+  .filters span { color: var(--text-secondary); margin-right: 4px; }
+  .filters button {
+    background: var(--surface-2); color: var(--text-primary); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit;
+  }
+  .filters button[aria-pressed="true"] { background: var(--series-1); color: #fff; border-color: var(--series-1); }
+  h2 { font-size: 15px; font-weight: 600; margin: 28px 0 12px; color: var(--text-primary); text-transform: uppercase; letter-spacing: .04em; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .tile { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .tile .label { color: var(--text-secondary); font-size: 13px; }
+  .tile .value { font-size: 26px; font-weight: 600; margin: 2px 0; }
+  .tile .delta { font-size: 12px; color: var(--text-muted); }
+  .tile .delta.up { color: var(--good); }
+  .tile .delta.down { color: var(--critical); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
+  .card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 8px 4px; min-width: 0; }
+  .card h3 { font-size: 14px; font-weight: 600; margin: 0 0 0 10px; }
+  .card .sub { margin: 0 0 6px 10px; color: var(--text-muted); font-size: 12px; }
+  .chart { width: 100%; height: 280px; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--text-secondary); font-weight: 500; background: var(--surface-2); position: sticky; top: 0; }
+  details summary { cursor: pointer; color: var(--text-secondary); margin: 8px 0; }
+  footer { color: var(--text-muted); font-size: 12px; margin-top: 32px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SaaS Revenue Dashboard</h1>
+  <p>Built from the dbt marts (<code>metrics_monthly</code>, <code>metrics_monthly_by_plan</code>, <code>dim_customers</code>, <code>fct_mrr_movements</code>). Synthetic data, snapshot as of <span id="asof"></span>.</p>
+</header>
+<main>
+  <div class="filters" role="group" aria-label="Time range">
+    <span>Time range</span>
+    <button data-range="12" aria-pressed="false">Last 12 months</button>
+    <button data-range="24" aria-pressed="true">Last 24 months</button>
+    <button data-range="0" aria-pressed="false">All history</button>
+  </div>
+
+  <h2>Executive</h2>
+  <div class="tiles" id="tiles"></div>
+  <div class="grid" style="margin-top:12px">
+    <div class="card"><h3>MRR</h3><p class="sub">Month-end recurring run-rate</p><div class="chart" id="c-mrr"></div></div>
+    <div class="card"><h3>Active customers</h3><p class="sub">Customers with MRR &gt; 0 at month end</p><div class="chart" id="c-active"></div></div>
+  </div>
+
+  <h2>Revenue</h2>
+  <div class="grid">
+    <div class="card"><h3>Recognized vs billed revenue</h3><p class="sub">Billing spikes on annual invoices; recognition spreads them over service months</p><div class="chart" id="c-recog"></div></div>
+    <div class="card"><h3>MRR movements</h3><p class="sub">New, expansion and reactivation add; contraction and churn subtract</p><div class="chart" id="c-move"></div></div>
+    <div class="card"><h3>Recognized revenue by type</h3><p class="sub">Recurring subscription revenue vs one-time onboarding fees</p><div class="chart" id="c-rectype"></div></div>
+    <div class="card"><h3>Deferred revenue balance</h3><p class="sub">Billed but not yet earned</p><div class="chart" id="c-deferred"></div></div>
+  </div>
+
+  <h2>Customers</h2>
+  <div class="grid">
+    <div class="card"><h3>New vs churned customers</h3><p class="sub">Monthly counts</p><div class="chart" id="c-newchurn"></div></div>
+    <div class="card"><h3>Customer churn rate</h3><p class="sub">Churned customers / prior month active customers</p><div class="chart" id="c-churnrate"></div></div>
+    <div class="card"><h3>Net and gross revenue retention</h3><p class="sub">Share of beginning MRR retained, with and without expansion</p><div class="chart" id="c-retention"></div></div>
+    <div class="card"><h3>ARPU</h3><p class="sub">MRR per active customer</p><div class="chart" id="c-arpu"></div></div>
+  </div>
+
+  <h2>Plans</h2>
+  <div class="grid">
+    <div class="card"><h3>MRR by plan tier</h3><p class="sub">Stacked month-end MRR</p><div class="chart" id="c-planmrr"></div></div>
+    <div class="card"><h3>Active customers by plan tier</h3><p class="sub">Customers on each tier at month end</p><div class="chart" id="c-plancust"></div></div>
+    <div class="card"><h3>Plan upgrades and downgrades</h3><p class="sub">Tier changes by month the new version started</p><div class="chart" id="c-updown"></div></div>
+    <div class="card"><h3>Cohort MRR retention</h3><p class="sub">MRR as % of the cohort's starting MRR, recent cohorts</p><div class="chart" id="c-cohort"></div></div>
+  </div>
+
+  <h2>Table view</h2>
+  <details open>
+    <summary>Monthly KPIs for the selected range</summary>
+    <div class="table-wrap"><table id="kpi-table"></table></div>
+  </details>
+  <details>
+    <summary>Top 10 active customers by ARR</summary>
+    <div class="table-wrap"><table id="top-table"></table></div>
+  </details>
+
+  <footer>Definitions: MRR = monthly-normalised list price of subscriptions active on the last day of the month (annual / 12); ARR = MRR x 12; churn rate = churned customers / prior month active; NRR = (beginning MRR - churn - contraction + expansion) / beginning MRR. See README for full definitions.</footer>
+</main>
+
+<script>
+const DATA = /*__DATA__*/;
+
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const fmtMoney = (v, compact = true) => {
+  if (v == null) return '';
+  if (!compact) return '$' + Math.round(v).toLocaleString();
+  const a = Math.abs(v);
+  if (a >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
+  if (a >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'K';
+  return '$' + Math.round(v).toLocaleString();
+};
+const fmtPct = (v, d = 1) => v == null ? '' : (v * 100).toFixed(d) + '%';
+const fmtInt = (v) => v == null ? '' : Math.round(v).toLocaleString();
+
+let range = 24;
+
+function sliceMonths(rows, n) {
+  return n ? rows.slice(-n) : rows;
+}
+
+function baseLayout(extra = {}) {
+  return Object.assign({
+    margin: { l: 56, r: 16, t: 8, b: 40 },
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    font: { family: 'inherit', size: 12, color: css('--text-secondary') },
+    xaxis: { gridcolor: 'rgba(0,0,0,0)', linecolor: css('--grid'), tickfont: { color: css('--text-muted') }, showline: true },
+    yaxis: { gridcolor: css('--grid'), gridwidth: 1, zerolinecolor: css('--grid'), tickfont: { color: css('--text-muted') }, rangemode: 'tozero' },
+    hovermode: 'x unified',
+    hoverlabel: { bgcolor: css('--surface'), bordercolor: css('--border'), font: { color: css('--text-primary') } },
+    legend: { orientation: 'h', y: 1.12, x: 0, font: { color: css('--text-secondary') } },
+    showlegend: false,
+    bargap: 0.45,
+  }, extra);
+}
+const config = { displayModeBar: false, responsive: true };
+
+function line(x, y, name, color, opts = {}) {
+  return Object.assign({
+    x, y, name, type: 'scatter', mode: 'lines',
+    line: { color, width: 2, shape: 'linear' },
+    hovertemplate: '%{y}<extra>' + name + '</extra>',
+  }, opts);
+}
+function endMarker(x, y, color) {
+  return { x: [x[x.length - 1]], y: [y[y.length - 1]], type: 'scatter', mode: 'markers+text',
+    marker: { color, size: 9, line: { color: css('--surface'), width: 2 } },
+    text: [null], textposition: 'top left', hoverinfo: 'skip', showlegend: false };
+}
+function bar(x, y, name, color, opts = {}) {
+  return Object.assign({ x, y, name, type: 'bar', marker: { color, line: { width: 0 } }, hovertemplate: '%{y}<extra>' + name + '</extra>' }, opts);
+}
+
+function render() {
+  const m = sliceMonths(DATA.monthly, range);
+  const x = m.map(r => r.month_start_date);
+  const last = DATA.monthly[DATA.monthly.length - 1];
+  const prev = DATA.monthly[DATA.monthly.length - 2];
+  const yearAgo = DATA.monthly[DATA.monthly.length - 13];
+  document.getElementById('asof').textContent = DATA.as_of_date;
+
+  // ---- tiles --------------------------------------------------------------
+  const tile = (label, value, delta, up, note) => `
+    <div class="tile"><div class="label">${label}</div><div class="value">${value}</div>
+    <div class="delta ${delta == null ? '' : (up ? 'up' : 'down')}">${delta == null ? '' : (up ? '&#9650; ' : '&#9660; ') + delta} ${note || ''}</div></div>`;
+  const arrDelta = (last.arr - yearAgo.arr) / yearAgo.arr;
+  document.getElementById('tiles').innerHTML = [
+    tile('ARR', fmtMoney(last.arr), fmtPct(arrDelta), arrDelta >= 0, 'vs 12 months ago'),
+    tile('MRR', fmtMoney(last.mrr), fmtPct(last.mrr_growth_rate), last.mrr_growth_rate >= 0, 'vs prior month'),
+    tile('Net new MRR', fmtMoney(last.net_new_mrr), fmtMoney(last.net_new_mrr - prev.net_new_mrr), last.net_new_mrr >= prev.net_new_mrr, 'vs prior month'),
+    tile('Active customers', fmtInt(last.active_customers), fmtInt(last.active_customers - prev.active_customers), last.active_customers >= prev.active_customers, 'vs prior month'),
+    tile('Customer churn rate', fmtPct(last.customer_churn_rate, 2), fmtPct(last.customer_churn_rate - prev.customer_churn_rate, 2), last.customer_churn_rate <= prev.customer_churn_rate, 'vs prior month'),
+    tile('Net revenue retention', fmtPct(last.net_revenue_retention), null),
+    tile('ARPU', fmtMoney(last.arpu), fmtPct((last.arpu - prev.arpu) / prev.arpu), last.arpu >= prev.arpu, 'vs prior month'),
+    tile('Recognized revenue', fmtMoney(last.recognized_revenue), fmtPct(last.recognized_revenue_growth_rate), (last.recognized_revenue_growth_rate || 0) >= 0, 'vs prior month'),
+  ].join('');
+
+  const s1 = css('--series-1'), s2 = css('--series-2'), s3 = css('--series-3'), s4 = css('--series-4'), s5 = css('--series-5');
+  const money = { tickprefix: '$', tickformat: '~s' };
+
+  // ---- executive ----------------------------------------------------------
+  const mrr = m.map(r => r.mrr);
+  Plotly.react('c-mrr', [
+    line(x, mrr, 'MRR', s1, { fill: 'tozeroy', fillcolor: s1 + '1a', hovertemplate: '%{y:$,.0f}<extra>MRR</extra>' }),
+    Object.assign(endMarker(x, mrr, s1), { text: [fmtMoney(mrr[mrr.length - 1])], textfont: { color: css('--text-primary') } }),
+  ], baseLayout({ yaxis: Object.assign(baseLayout().yaxis, money) }), config);
+
+  const active = m.map(r => r.active_customers);
+  Plotly.react('c-active', [
+    line(x, active, 'Active customers', s1, { hovertemplate: '%{y:,}<extra>Active customers</extra>' }),
+    Object.assign(endMarker(x, active, s1), { text: [fmtInt(active[active.length - 1])], textfont: { color: css('--text-primary') } }),
+  ], baseLayout(), config);
+
+  // ---- revenue ------------------------------------------------------------
+  Plotly.react('c-recog', [
+    line(x, m.map(r => r.recognized_revenue), 'Recognized', s1, { hovertemplate: '%{y:$,.0f}<extra>Recognized</extra>' }),
+    line(x, m.map(r => r.billed_amount), 'Billed', s2, { hovertemplate: '%{y:$,.0f}<extra>Billed</extra>' }),
+  ], baseLayout({ showlegend: true, yaxis: Object.assign(baseLayout().yaxis, money) }), config);
+
+  Plotly.react('c-move', [
+    bar(x, m.map(r => r.new_mrr), 'New', s1, { hovertemplate: '%{y:$,.0f}<extra>New</extra>' }),
+    bar(x, m.map(r => r.expansion_mrr), 'Expansion', s3, { hovertemplate: '%{y:$,.0f}<extra>Expansion</extra>' }),
+    bar(x, m.map(r => r.reactivation_mrr), 'Reactivation', s4, { hovertemplate: '%{y:$,.0f}<extra>Reactivation</extra>' }),
+    bar(x, m.map(r => -r.contraction_mrr), 'Contraction', s5, { hovertemplate: '%{y:$,.0f}<extra>Contraction</extra>' }),
+    bar(x, m.map(r => -r.churned_mrr), 'Churn', s2, { hovertemplate: '%{y:$,.0f}<extra>Churn</extra>' }),
+  ], baseLayout({ barmode: 'relative', showlegend: true, bargap: 0.35,
+      yaxis: Object.assign(baseLayout().yaxis, money, { rangemode: 'normal' }) }), config);
+
+  Plotly.react('c-rectype', [
+    bar(x, m.map(r => r.recognized_recurring_revenue), 'Recurring', s1, { hovertemplate: '%{y:$,.0f}<extra>Recurring</extra>' }),
+    bar(x, m.map(r => r.recognized_one_time_revenue), 'One-time', s2, { hovertemplate: '%{y:$,.0f}<extra>One-time</extra>' }),
+  ], baseLayout({ barmode: 'stack', showlegend: true, bargap: 0.35, yaxis: Object.assign(baseLayout().yaxis, money) }), config);
+
+  const deferred = m.map(r => r.deferred_revenue_balance);
+  Plotly.react('c-deferred', [
+    line(x, deferred, 'Deferred revenue', s1, { fill: 'tozeroy', fillcolor: s1 + '1a', hovertemplate: '%{y:$,.0f}<extra>Deferred</extra>' }),
+  ], baseLayout({ yaxis: Object.assign(baseLayout().yaxis, money) }), config);
+
+  // ---- customers ----------------------------------------------------------
+  Plotly.react('c-newchurn', [
+    bar(x, m.map(r => r.new_customers), 'New', s1),
+    bar(x, m.map(r => -r.churned_customers), 'Churned', s2),
+  ], baseLayout({ barmode: 'relative', showlegend: true, bargap: 0.35, yaxis: Object.assign(baseLayout().yaxis, { rangemode: 'normal' }) }), config);
+
+  Plotly.react('c-churnrate', [
+    line(x, m.map(r => r.customer_churn_rate), 'Churn rate', s1, { hovertemplate: '%{y:.2%}<extra>Churn rate</extra>' }),
+  ], baseLayout({ yaxis: Object.assign(baseLayout().yaxis, { tickformat: '.1%' }) }), config);
+
+  Plotly.react('c-retention', [
+    line(x, m.map(r => r.net_revenue_retention), 'Net retention', s1, { hovertemplate: '%{y:.1%}<extra>NRR</extra>' }),
+    line(x, m.map(r => r.gross_revenue_retention), 'Gross retention', s2, { hovertemplate: '%{y:.1%}<extra>GRR</extra>' }),
+  ], baseLayout({ showlegend: true, yaxis: Object.assign(baseLayout().yaxis, { tickformat: '.0%', rangemode: 'normal', range: [0.9, 1.06] }) }), config);
+
+  Plotly.react('c-arpu', [
+    line(x, m.map(r => r.arpu), 'ARPU', s1, { hovertemplate: '%{y:$,.0f}<extra>ARPU</extra>' }),
+  ], baseLayout({ yaxis: Object.assign(baseLayout().yaxis, money) }), config);
+
+  // ---- plans --------------------------------------------------------------
+  const tiers = ['starter', 'growth', 'scale', 'enterprise'];
+  const tierColors = [css('--ord-1'), css('--ord-2'), css('--ord-3'), css('--ord-4')];
+  const monthSet = new Set(x);
+  const byTier = (field) => tiers.map((t, i) => {
+    const rows = DATA.by_plan.filter(r => r.plan_tier === t && monthSet.has(r.month_start_date));
+    return { t, i, x: rows.map(r => r.month_start_date), y: rows.map(r => r[field]) };
+  });
+  Plotly.react('c-planmrr', byTier('mrr').map(s =>
+    line(s.x, s.y, s.t[0].toUpperCase() + s.t.slice(1), tierColors[s.i], { stackgroup: 'one', fillcolor: tierColors[s.i] + '99', hovertemplate: '%{y:$,.0f}<extra>' + s.t + '</extra>' })
+  ), baseLayout({ showlegend: true, yaxis: Object.assign(baseLayout().yaxis, money) }), config);
+
+  Plotly.react('c-plancust', byTier('active_customers').map(s =>
+    bar(s.x, s.y, s.t[0].toUpperCase() + s.t.slice(1), tierColors[s.i])
+  ), baseLayout({ barmode: 'stack', showlegend: true, bargap: 0.35 }), config);
+
+  const up = x.map(d => DATA.by_plan.filter(r => r.month_start_date === d).reduce((a, r) => a + r.upgrades_into_tier, 0));
+  const down = x.map(d => DATA.by_plan.filter(r => r.month_start_date === d).reduce((a, r) => a + r.downgrades_into_tier, 0));
+  Plotly.react('c-updown', [
+    bar(x, up, 'Upgrades', s1),
+    bar(x, down.map(v => -v), 'Downgrades', s2),
+  ], baseLayout({ barmode: 'relative', showlegend: true, bargap: 0.35, yaxis: Object.assign(baseLayout().yaxis, { rangemode: 'normal' }) }), config);
+
+  const cohortNames = [...new Set(DATA.cohorts.map(r => r.cohort))].slice(-6);
+  const cohortColors = [s1, s2, s3, s4, s5, css('--ord-4')];
+  Plotly.react('c-cohort', cohortNames.map((c, i) => {
+    const rows = DATA.cohorts.filter(r => r.cohort === c);
+    return line(rows.map(r => r.months_since_first_paid), rows.map(r => r.retention_pct), c, cohortColors[i],
+      { hovertemplate: '%{y:.1f}%<extra>' + c + '</extra>' });
+  }), baseLayout({ showlegend: true, hovermode: 'closest',
+      xaxis: Object.assign(baseLayout().xaxis, { title: { text: 'Months since first paid month', font: { color: css('--text-muted') } }, dtick: 1 }),
+      yaxis: Object.assign(baseLayout().yaxis, { ticksuffix: '%', rangemode: 'normal' }) }), config);
+
+  // ---- tables -------------------------------------------------------------
+  const cols = [
+    ['Month', r => r.month_start_date.slice(0, 7)], ['MRR', r => fmtMoney(r.mrr, false)], ['ARR', r => fmtMoney(r.arr, false)],
+    ['New MRR', r => fmtMoney(r.new_mrr, false)], ['Expansion', r => fmtMoney(r.expansion_mrr, false)],
+    ['Contraction', r => fmtMoney(r.contraction_mrr, false)], ['Churned MRR', r => fmtMoney(r.churned_mrr, false)],
+    ['Active cust.', r => fmtInt(r.active_customers)], ['New', r => fmtInt(r.new_customers)], ['Churned', r => fmtInt(r.churned_customers)],
+    ['Churn rate', r => fmtPct(r.customer_churn_rate, 2)], ['ARPU', r => fmtMoney(r.arpu, false)], ['NRR', r => fmtPct(r.net_revenue_retention)],
+    ['Recognized rev.', r => fmtMoney(r.recognized_revenue, false)], ['Billed', r => fmtMoney(r.billed_amount, false)],
+  ];
+  document.getElementById('kpi-table').innerHTML =
+    '<thead><tr>' + cols.map(c => `<th>${c[0]}</th>`).join('') + '</tr></thead><tbody>' +
+    [...m].reverse().map(r => '<tr>' + cols.map(c => `<td>${c[1](r)}</td>`).join('') + '</tr>').join('') + '</tbody>';
+
+  const tcols = [['Customer', r => r.company_name], ['Segment', r => r.segment], ['Tier', r => r.plan_tier], ['Interval', r => r.billing_interval],
+    ['Seats', r => fmtInt(r.seats)], ['ARR', r => fmtMoney(r.current_arr, false)], ['Tenure (months)', r => fmtInt(r.paid_tenure_months)]];
+  document.getElementById('top-table').innerHTML =
+    '<thead><tr>' + tcols.map(c => `<th>${c[0]}</th>`).join('') + '</tr></thead><tbody>' +
+    DATA.top_customers.map(r => '<tr>' + tcols.map(c => `<td>${c[1](r)}</td>`).join('') + '</tr>').join('') + '</tbody>';
+}
+
+document.querySelectorAll('.filters button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.filters button').forEach(o => o.setAttribute('aria-pressed', 'false'));
+  b.setAttribute('aria-pressed', 'true');
+  range = Number(b.dataset.range);
+  render();
+}));
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+render();
+</script>
+</body>
+</html>
