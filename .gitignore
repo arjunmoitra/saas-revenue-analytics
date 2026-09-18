@@ -15,3 +15,6 @@ data/*.duckdb.wal
 
 # OS
 .DS_Store
+
+# dbt anonymous usage id
+.user.yml
