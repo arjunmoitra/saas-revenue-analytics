@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test-validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate synthetic data
+        run: python scripts/generate_synthetic_data.py
+
+      - name: Load raw data into DuckDB
+        run: python scripts/load_raw_data.py
+
+      - name: Install dbt packages
+        run: dbt deps
+
+      - name: Run dbt build (models + tests)
+        run: dbt build
+
+      - name: Run independent metric validation
+        run: python scripts/validate_metrics.py

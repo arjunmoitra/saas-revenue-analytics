@@ -1,0 +1,22 @@
+version: 2
+
+exposures:
+  - name: saas_revenue_dashboard
+    label: SaaS Revenue Dashboard
+    type: dashboard
+    maturity: medium
+    url: dashboard/index.html
+    description: >
+      Single-file HTML/Plotly dashboard built by scripts/build_dashboard.py.
+      Shows executive MRR/ARR trends, the MRR movement waterfall, recognized vs
+      billed revenue, churn and retention, ARPU, plan-tier mix, cohort
+      retention and a KPI table. Reads only from the marts listed below,
+      never from raw or staging.
+    depends_on:
+      - ref('metrics_monthly')
+      - ref('metrics_monthly_by_plan')
+      - ref('dim_customers')
+      - ref('fct_mrr_movements')
+    owner:
+      name: Arjun Moitra
+      email: arjunmoitra62@gmail.com

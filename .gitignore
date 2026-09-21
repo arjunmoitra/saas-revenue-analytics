@@ -18,3 +18,8 @@ data/*.duckdb.wal
 
 # dbt anonymous usage id
 .user.yml
+
+# stray zip exports of gitignored build artifacts
+dbt_packages.zip
+target.zip
+*.duckdb.zip
